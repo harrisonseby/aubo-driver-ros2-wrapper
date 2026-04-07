@@ -1,0 +1,17 @@
+<library path="aubo_driver">
+  <class
+    name="aubo_driver/AuboHardwareInterface"
+    type="aubo_driver::AuboHardwareInterface"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control hardware interface for Aubo robots running the legacy firmware.
+      Uses the old SDK (ServiceInterface / Tcp2CanbusMode) so no firmware upgrade
+      is required.  Communicates on port 8899 using two TCP connections
+      (send + receive), streams joint positions via robotServiceSetRobotPosData2Canbus,
+      and reads state via robotServiceGetCurrentWaypointInfo at ~500 Hz.
+
+      Required hardware parameter in the URDF ros2_control tag:
+        robot_ip  — IP address of the robot controller (e.g. 192.168.1.102)
+    </description>
+  </class>
+</library>
