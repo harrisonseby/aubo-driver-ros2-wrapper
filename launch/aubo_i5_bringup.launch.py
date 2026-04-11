@@ -21,7 +21,7 @@ def generate_launch_description():
 
     robot_ip_arg = DeclareLaunchArgument(
         "robot_ip",
-        default_value="192.168.1.102",
+        default_value="192.168.1.108",
         description="IP address of the Aubo robot controller",
     )
 

@@ -13,6 +13,7 @@
 #include "aubo_driver/aubo_driver.h"
 
 #include <chrono>
+#include <cmath>
 #include <pluginlib/class_list_macros.hpp>
 
 namespace aubo_driver {
@@ -78,7 +79,9 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
 }
 
 // ---------------------------------------------------------------------------
-// on_activate  — connect to robot, enter Tcp2CanbusMode, start poll thread
+// on_activate  — connect receive service only; Tcp2CanbusMode is entered
+//                lazily in write() so the teach pendant remains usable until
+//                the trajectory controller actually sends a command.
 // ---------------------------------------------------------------------------
 
 hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
@@ -91,8 +94,8 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
-    // Seed command positions from the current robot position so the robot
-    // does not jump when the controller first takes over.
+    // Seed command positions from the current robot position so we know the
+    // "idle" position; write() uses this to detect the first real command.
     aubo_robot_namespace::wayPoint_S wp;
     int ret = robot_receive_service_.robotServiceGetCurrentWaypointInfo(wp);
     if (ret == aubo_robot_namespace::InterfaceCallSuccCode) {
@@ -101,6 +104,7 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
             actual_q_raw_[i] = wp.jointpos[i];
             actual_q_[i]     = wp.jointpos[i];
             cmd_q_[i]        = wp.jointpos[i];
+            seeded_q_[i]     = wp.jointpos[i];
         }
         initialized_ = true;
     } else {
@@ -114,7 +118,8 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
     poll_thread_ = std::thread(&AuboHardwareInterface::pollThread, this);
 
     RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
-                "Activation complete.");
+                "Activation complete. Teach pendant is active; "
+                "Tcp2CanbusMode will engage on first trajectory command.");
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -192,6 +197,29 @@ hardware_interface::return_type AuboHardwareInterface::write(
         return hardware_interface::return_type::ERROR;
     }
 
+    // Check whether cmd_q_ has actually moved away from the seeded position.
+    // Until a trajectory controller sends a real goal, cmd_q_ == seeded_q_ and
+    // we deliberately do nothing — this keeps the teach pendant free.
+    static constexpr double kCommandThreshold = 1e-4;  // ~0.006 deg
+    bool has_real_command = false;
+    for (int i = 0; i < DOF; i++) {
+        if (std::abs(cmd_q_[i] - seeded_q_[i]) > kCommandThreshold) {
+            has_real_command = true;
+            break;
+        }
+    }
+
+    if (!has_real_command) {
+        return hardware_interface::return_type::OK;
+    }
+
+    // First real command — enter Tcp2CanbusMode now.
+    if (!canbus_active_) {
+        if (!enterCanbusMode()) {
+            return hardware_interface::return_type::ERROR;
+        }
+    }
+
     double joints[DOF];
     for (int i = 0; i < DOF; i++) joints[i] = cmd_q_[i];
 
@@ -207,43 +235,52 @@ hardware_interface::return_type AuboHardwareInterface::write(
 }
 
 // ---------------------------------------------------------------------------
-// connectToRobot  — login x2, enter Tcp2CanbusMode
+// connectToRobot  — login receive service only (for joint state reading).
+//                   The send service + Tcp2CanbusMode are set up lazily in
+//                   enterCanbusMode() when the first real command arrives.
 // ---------------------------------------------------------------------------
 
 bool AuboHardwareInterface::connectToRobot()
 {
     const int max_tries = 5;
 
-    // --- send service login ---
     int ret = aubo_robot_namespace::ErrCode_SocketDisconnect;
     for (int i = 0; i < max_tries && ret != aubo_robot_namespace::InterfaceCallSuccCode; i++) {
-        ret = robot_send_service_.robotServiceLogin(
+        ret = robot_receive_service_.robotServiceLogin(
             robot_ip_.c_str(), 8899, "aubo", "123456");
         if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
             RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
-                        "Send-service login attempt %d/%d failed (ret=%d).",
+                        "Receive-service login attempt %d/%d failed (ret=%d).",
                         i + 1, max_tries, ret);
         }
     }
     if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
         RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
-                     "Could not log in (send service) after %d attempts.", max_tries);
+                     "Could not log in (receive service) after %d attempts.", max_tries);
         return false;
     }
 
-    // --- receive service login ---
-    ret = robot_receive_service_.robotServiceLogin(
+    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+                "Receive service logged in — joint state polling active.");
+    connected_ = true;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// enterCanbusMode  — login send service and enter Tcp2CanbusMode.
+//                    Called lazily from write() on the first real command.
+// ---------------------------------------------------------------------------
+
+bool AuboHardwareInterface::enterCanbusMode()
+{
+    int ret = robot_send_service_.robotServiceLogin(
         robot_ip_.c_str(), 8899, "aubo", "123456");
     if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
         RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
-                     "Receive-service login failed (ret=%d).", ret);
-        robot_send_service_.robotServiceLogout();
+                     "Send-service login failed (ret=%d).", ret);
         return false;
     }
 
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"), "Logged in successfully.");
-
-    // --- enter Tcp2CanbusMode so we can stream joint positions ---
     ret = robot_send_service_.robotServiceEnterTcp2CanbusMode();
     if (ret == aubo_robot_namespace::ErrCode_ResponseReturnError) {
         // Already in canbus mode from a previous session; leave then re-enter.
@@ -254,14 +291,14 @@ bool AuboHardwareInterface::connectToRobot()
         RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
                      "Failed to enter Tcp2CanbusMode (ret=%d). "
                      "Is another client already in control?", ret);
-        robot_receive_service_.robotServiceLogout();
         robot_send_service_.robotServiceLogout();
         return false;
     }
 
     RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
-                "Entered Tcp2CanbusMode — ready for position streaming.");
-    connected_ = true;
+                "Entered Tcp2CanbusMode — teach pendant overridden, "
+                "ROS trajectory control is now active.");
+    canbus_active_ = true;
     return true;
 }
 
@@ -277,10 +314,14 @@ void AuboHardwareInterface::disconnectFromRobot()
         poll_thread_.join();
     }
 
-    if (connected_) {
+    if (canbus_active_) {
         robot_send_service_.robotServiceLeaveTcp2CanbusMode();
-        robot_receive_service_.robotServiceLogout();
         robot_send_service_.robotServiceLogout();
+        canbus_active_ = false;
+    }
+
+    if (connected_) {
+        robot_receive_service_.robotServiceLogout();
         connected_ = false;
         RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
                     "Disconnected from robot.");

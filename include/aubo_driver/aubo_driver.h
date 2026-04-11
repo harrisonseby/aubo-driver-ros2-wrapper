@@ -90,11 +90,16 @@ private:
     std::atomic<bool> poll_running_{false};
 
     // --- connection state -----------------------------------------------------
-    std::atomic<bool> connected_{false};
+    std::atomic<bool> connected_{false};       // receive service is up
+    std::atomic<bool> canbus_active_{false};   // Tcp2CanbusMode is active (send service up)
 
     // --- config ---------------------------------------------------------------
     std::string robot_ip_{"127.0.0.1"};
     bool        initialized_{false};
+
+    // --- helpers for deferred canbus entry ------------------------------------
+    bool enterCanbusMode();   // called lazily from write() on first real command
+    std::array<double, DOF> seeded_q_{};  // position at activation — used to detect real commands
 };
 
 }  // namespace aubo_driver
