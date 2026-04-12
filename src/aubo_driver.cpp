@@ -22,7 +22,7 @@ namespace aubo_driver {
 // Destructor
 // ---------------------------------------------------------------------------
 
-AuboHardwareInterface::~AuboHardwareInterface()
+AuboRos2Wrapper::~AuboRos2Wrapper()
 {
     disconnectFromRobot();
 }
@@ -31,7 +31,7 @@ AuboHardwareInterface::~AuboHardwareInterface()
 // on_init  — validate URDF hardware config, read parameters
 // ---------------------------------------------------------------------------
 
-hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
+hardware_interface::CallbackReturn AuboRos2Wrapper::on_init(
     const hardware_interface::HardwareInfo & info)
 {
     if (hardware_interface::SystemInterface::on_init(info) !=
@@ -44,31 +44,31 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
     if (info_.hardware_parameters.count("robot_ip")) {
         robot_ip_ = info_.hardware_parameters.at("robot_ip");
     }
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+    RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Robot IP: %s", robot_ip_.c_str());
 
     // Validate each joint: exactly 1 position command interface,
     // at least 1 position state interface.
     for (const auto & joint : info_.joints) {
         if (joint.command_interfaces.size() != 1) {
-            RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+            RCLCPP_FATAL(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Joint '%s' has %zu command interface(s), 1 (position) expected.",
                 joint.name.c_str(), joint.command_interfaces.size());
             return hardware_interface::CallbackReturn::ERROR;
         }
         if (joint.command_interfaces[0].name != hardware_interface::HW_IF_POSITION) {
-            RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+            RCLCPP_FATAL(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Joint '%s' command interface is '%s', 'position' expected.",
                 joint.name.c_str(), joint.command_interfaces[0].name.c_str());
             return hardware_interface::CallbackReturn::ERROR;
         }
         if (joint.state_interfaces.empty()) {
-            RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+            RCLCPP_FATAL(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Joint '%s' has no state interfaces.", joint.name.c_str());
             return hardware_interface::CallbackReturn::ERROR;
         }
         if (joint.state_interfaces[0].name != hardware_interface::HW_IF_POSITION) {
-            RCLCPP_FATAL(rclcpp::get_logger("AuboHardwareInterface"),
+            RCLCPP_FATAL(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Joint '%s' first state interface is '%s', 'position' expected.",
                 joint.name.c_str(), joint.state_interfaces[0].name.c_str());
             return hardware_interface::CallbackReturn::ERROR;
@@ -84,10 +84,10 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_init(
 //                the trajectory controller actually sends a command.
 // ---------------------------------------------------------------------------
 
-hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
+hardware_interface::CallbackReturn AuboRos2Wrapper::on_activate(
     const rclcpp_lifecycle::State & /*previous_state*/)
 {
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+    RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Activating — connecting to robot at %s ...", robot_ip_.c_str());
 
     if (!connectToRobot()) {
@@ -108,16 +108,16 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
         }
         initialized_ = true;
     } else {
-        RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+        RCLCPP_WARN(rclcpp::get_logger("AuboRos2Wrapper"),
                     "Could not read initial joint positions (ret=%d). "
                     "Commands will start at zero.", ret);
     }
 
     // Launch the background thread that polls joint state at ~500 Hz.
     poll_running_ = true;
-    poll_thread_ = std::thread(&AuboHardwareInterface::pollThread, this);
+    poll_thread_ = std::thread(&AuboRos2Wrapper::pollThread, this);
 
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+    RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Activation complete. Teach pendant is active; "
                 "Tcp2CanbusMode will engage on first trajectory command.");
     return hardware_interface::CallbackReturn::SUCCESS;
@@ -127,12 +127,12 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_activate(
 // on_deactivate  — stop poll thread, leave Tcp2CanbusMode, logout
 // ---------------------------------------------------------------------------
 
-hardware_interface::CallbackReturn AuboHardwareInterface::on_deactivate(
+hardware_interface::CallbackReturn AuboRos2Wrapper::on_deactivate(
     const rclcpp_lifecycle::State & /*previous_state*/)
 {
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"), "Deactivating...");
+    RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"), "Deactivating...");
     disconnectFromRobot();
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"), "Deactivated.");
+    RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"), "Deactivated.");
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -141,7 +141,7 @@ hardware_interface::CallbackReturn AuboHardwareInterface::on_deactivate(
 // ---------------------------------------------------------------------------
 
 std::vector<hardware_interface::StateInterface>
-AuboHardwareInterface::export_state_interfaces()
+AuboRos2Wrapper::export_state_interfaces()
 {
     std::vector<hardware_interface::StateInterface> si;
     for (std::size_t i = 0; i < info_.joints.size(); ++i) {
@@ -157,7 +157,7 @@ AuboHardwareInterface::export_state_interfaces()
 // ---------------------------------------------------------------------------
 
 std::vector<hardware_interface::CommandInterface>
-AuboHardwareInterface::export_command_interfaces()
+AuboRos2Wrapper::export_command_interfaces()
 {
     std::vector<hardware_interface::CommandInterface> ci;
     for (std::size_t i = 0; i < info_.joints.size(); ++i) {
@@ -172,7 +172,7 @@ AuboHardwareInterface::export_command_interfaces()
 // read  — copy latest poll-thread snapshot into the StateInterface buffers
 // ---------------------------------------------------------------------------
 
-hardware_interface::return_type AuboHardwareInterface::read(
+hardware_interface::return_type AuboRos2Wrapper::read(
     const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
     // actual_q_raw_ is written by pollThread under mtx_.
@@ -187,11 +187,11 @@ hardware_interface::return_type AuboHardwareInterface::read(
 // write  — send joint position command to robot via Tcp2CanbusMode
 // ---------------------------------------------------------------------------
 
-hardware_interface::return_type AuboHardwareInterface::write(
+hardware_interface::return_type AuboRos2Wrapper::write(
     const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
     if (!connected_) {
-        RCLCPP_ERROR_THROTTLE(rclcpp::get_logger("AuboHardwareInterface"),
+        RCLCPP_ERROR_THROTTLE(rclcpp::get_logger("AuboRos2Wrapper"),
             *rclcpp::Clock::make_shared(), 2000,
             "write() called but robot is not connected.");
         return hardware_interface::return_type::ERROR;
@@ -225,7 +225,7 @@ hardware_interface::return_type AuboHardwareInterface::write(
 
     int ret = robot_send_service_.robotServiceSetRobotPosData2Canbus(joints);
     if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
-        RCLCPP_WARN_THROTTLE(rclcpp::get_logger("AuboHardwareInterface"),
+        RCLCPP_WARN_THROTTLE(rclcpp::get_logger("AuboRos2Wrapper"),
             *rclcpp::Clock::make_shared(), 1000,
             "robotServiceSetRobotPosData2Canbus failed (ret=%d).", ret);
         return hardware_interface::return_type::ERROR;
@@ -240,7 +240,7 @@ hardware_interface::return_type AuboHardwareInterface::write(
 //                   enterCanbusMode() when the first real command arrives.
 // ---------------------------------------------------------------------------
 
-bool AuboHardwareInterface::connectToRobot()
+bool AuboRos2Wrapper::connectToRobot()
 {
     const int max_tries = 5;
 
@@ -249,18 +249,18 @@ bool AuboHardwareInterface::connectToRobot()
         ret = robot_receive_service_.robotServiceLogin(
             robot_ip_.c_str(), 8899, "aubo", "123456");
         if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
-            RCLCPP_WARN(rclcpp::get_logger("AuboHardwareInterface"),
+            RCLCPP_WARN(rclcpp::get_logger("AuboRos2Wrapper"),
                         "Receive-service login attempt %d/%d failed (ret=%d).",
                         i + 1, max_tries, ret);
         }
     }
     if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
-        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+        RCLCPP_ERROR(rclcpp::get_logger("AuboRos2Wrapper"),
                      "Could not log in (receive service) after %d attempts.", max_tries);
         return false;
     }
 
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+    RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Receive service logged in — joint state polling active.");
     connected_ = true;
     return true;
@@ -271,12 +271,12 @@ bool AuboHardwareInterface::connectToRobot()
 //                    Called lazily from write() on the first real command.
 // ---------------------------------------------------------------------------
 
-bool AuboHardwareInterface::enterCanbusMode()
+bool AuboRos2Wrapper::enterCanbusMode()
 {
     int ret = robot_send_service_.robotServiceLogin(
         robot_ip_.c_str(), 8899, "aubo", "123456");
     if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
-        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+        RCLCPP_ERROR(rclcpp::get_logger("AuboRos2Wrapper"),
                      "Send-service login failed (ret=%d).", ret);
         return false;
     }
@@ -288,14 +288,14 @@ bool AuboHardwareInterface::enterCanbusMode()
         ret = robot_send_service_.robotServiceEnterTcp2CanbusMode();
     }
     if (ret != aubo_robot_namespace::InterfaceCallSuccCode) {
-        RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+        RCLCPP_ERROR(rclcpp::get_logger("AuboRos2Wrapper"),
                      "Failed to enter Tcp2CanbusMode (ret=%d). "
                      "Is another client already in control?", ret);
         robot_send_service_.robotServiceLogout();
         return false;
     }
 
-    RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+    RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"),
                 "Entered Tcp2CanbusMode — teach pendant overridden, "
                 "ROS trajectory control is now active.");
     canbus_active_ = true;
@@ -306,7 +306,7 @@ bool AuboHardwareInterface::enterCanbusMode()
 // disconnectFromRobot  — stop poll thread, leave Tcp2CanbusMode, logout
 // ---------------------------------------------------------------------------
 
-void AuboHardwareInterface::disconnectFromRobot()
+void AuboRos2Wrapper::disconnectFromRobot()
 {
     // Stop the background poll thread first.
     poll_running_ = false;
@@ -323,7 +323,7 @@ void AuboHardwareInterface::disconnectFromRobot()
     if (connected_) {
         robot_receive_service_.robotServiceLogout();
         connected_ = false;
-        RCLCPP_INFO(rclcpp::get_logger("AuboHardwareInterface"),
+        RCLCPP_INFO(rclcpp::get_logger("AuboRos2Wrapper"),
                     "Disconnected from robot.");
     }
 }
@@ -332,7 +332,7 @@ void AuboHardwareInterface::disconnectFromRobot()
 // pollThread  — background joint-state reader (~500 Hz)
 // ---------------------------------------------------------------------------
 
-void AuboHardwareInterface::pollThread()
+void AuboRos2Wrapper::pollThread()
 {
     aubo_robot_namespace::wayPoint_S wp;
 
@@ -345,7 +345,7 @@ void AuboHardwareInterface::pollThread()
                 actual_q_raw_[i] = wp.jointpos[i];
             }
         } else if (ret == aubo_robot_namespace::ErrCode_SocketDisconnect) {
-            RCLCPP_ERROR(rclcpp::get_logger("AuboHardwareInterface"),
+            RCLCPP_ERROR(rclcpp::get_logger("AuboRos2Wrapper"),
                          "Poll thread: socket disconnected.");
             connected_ = false;
             break;
@@ -360,5 +360,5 @@ void AuboHardwareInterface::pollThread()
 // ---------------------------------------------------------------------------
 // Pluginlib export — allows controller_manager to load this as a plugin
 // ---------------------------------------------------------------------------
-PLUGINLIB_EXPORT_CLASS(aubo_driver::AuboHardwareInterface,
+PLUGINLIB_EXPORT_CLASS(aubo_driver::AuboRos2Wrapper,
                        hardware_interface::SystemInterface)

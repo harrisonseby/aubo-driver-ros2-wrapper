@@ -29,11 +29,11 @@ namespace aubo_driver {
  * Hardware parameters (from ros2_control URDF tag):
  *   robot_ip   IP address of the robot controller  (default: 127.0.0.1)
  */
-class AuboHardwareInterface : public hardware_interface::SystemInterface
+class AuboRos2Wrapper : public hardware_interface::SystemInterface
 {
 public:
-    AuboHardwareInterface() = default;
-    ~AuboHardwareInterface() override;
+    AuboRos2Wrapper() = default;
+    ~AuboRos2Wrapper() override;
 
     // --- Lifecycle callbacks --------------------------------------------------
 
